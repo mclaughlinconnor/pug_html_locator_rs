@@ -18,7 +18,10 @@ fn is_void_element(tag_name: &str) -> bool {
 fn main() {
     let mut parser = Parser::new();
 
-    let pug_input = "tag(attribute='value' attribute)";
+    let pug_input = r#"
+        tag(attribute=isAuthenticated ? true : false, attribute)
+          tag_two(attribute)
+    "#;
 
     let language = unsafe { tree_sitter_pug() };
     parser.set_language(language).unwrap();
@@ -31,6 +34,8 @@ fn main() {
 
     traverse_tree(&mut cursor, pug_input.as_bytes(), 0, &mut s);
 
+    println!("{}", pug_input);
+    println!("{}\n", root_node.to_sexp());
     println!("{}", s);
 }
 
@@ -40,7 +45,6 @@ fn visit_attributes(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], s: 
     let mut child_cursor = cursor.clone();
     for attribute in node.named_children(&mut child_cursor) {
         if !first {
-            println!("first");
             s.push_str(", ");
         } else {
             first = false;
@@ -76,12 +80,12 @@ fn visit_attributes(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], s: 
 fn visit_tag(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], s: &mut String) {
     let mut cursor_mutable = cursor.clone();
 
-    let mut children = node.named_children(&mut cursor_mutable);
-    let name = children.next().unwrap().utf8_text(source).unwrap();
+    let mut child_nodes = node.named_children(&mut cursor_mutable);
+    let name = child_nodes.next().unwrap().utf8_text(source).unwrap();
     s.push_str(&format!("<{} ", name).to_string());
 
     let mut attribute_cursor = cursor.clone();
-    let attributes = children.next();
+    let attributes = child_nodes.next();
 
     match attributes {
         Some(mut attributes) => {
@@ -90,7 +94,13 @@ fn visit_tag(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], s: &mut St
                 s.push_str("/>");
             } else {
                 s.push_str(">");
-                // visit children
+                let children_elements = child_nodes.next();
+                match children_elements {
+                    Some(children_elements) => {
+                        traverse_tree(&mut children_elements.walk(), source, 0, s);
+                    }
+                    None => {}
+                }
                 s.push_str(&format!("</{}>", name).to_string());
             }
         }
@@ -105,24 +115,15 @@ fn traverse_tree(cursor: &mut TreeCursor, source: &[u8], depth: usize, s: &mut S
         let node_type = node.kind();
 
         match node_type {
+            "source_file" | "children" => {
+                let mut child_cursor = cursor.clone();
+                let children = node.named_children(&mut child_cursor);
+                for child in children {
+                    traverse_tree(&mut child.walk(), source, depth, s);
+                }
+            }
             "tag" => visit_tag(cursor, &mut node, source, s),
             _ => {}
         }
-
-        println!("{:indent$}{}", "", node_type, indent = depth * 4);
-        let node_text = node.utf8_text(source).unwrap();
-
-        // s.push_str(&format!("{} ", node_text).to_string());
-    }
-
-    if cursor.goto_first_child() {
-        loop {
-            traverse_tree(cursor, source, depth + 1, s);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-
-        cursor.goto_parent();
     }
 }
