@@ -3,6 +3,19 @@ extern "C" {
     fn tree_sitter_pug() -> Language;
 }
 
+struct Range {
+    html_end: usize,
+    html_start: usize,
+    pug_end: usize,
+    pug_start: usize,
+}
+
+struct State {
+    html_text: String,
+    pug_text: String,
+    ranges: Vec<Range>,
+}
+
 fn is_void_element(tag_name: &str) -> bool {
     match tag_name {
         "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | "link" | "meta"
@@ -30,22 +43,53 @@ fn main() {
     let root_node = tree.root_node();
     let mut cursor = root_node.walk();
 
-    let mut s = String::new();
+    let mut state = State {
+        html_text: String::new(),
+        pug_text: pug_input.to_string(),
+        ranges: Vec::new(),
+    };
 
-    traverse_tree(&mut cursor, pug_input.as_bytes(), 0, &mut s);
+    traverse_tree(&mut cursor, pug_input.as_bytes(), 0, &mut state);
 
     println!("{}", pug_input);
     println!("{}\n", root_node.to_sexp());
-    println!("{}", s);
+    println!("{}", state.html_text);
+    for range in state.ranges {
+        println!(
+            "{} => {}",
+            state.html_text[range.html_start..range.html_end].to_string(),
+            state.pug_text[range.pug_start..range.pug_end].to_string()
+        );
+    }
 }
 
-fn visit_attributes(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], s: &mut String) {
+fn push_range(state: &mut State, to_push: &str, pug_range: Option<tree_sitter::Range>) {
+    match pug_range {
+        Some(range) => {
+            let html_len = state.html_text.len();
+
+            let range = Range {
+                html_start: html_len,
+                html_end: html_len + to_push.len(),
+                pug_start: range.start_byte,
+                pug_end: range.end_byte,
+            };
+
+            state.ranges.push(range);
+        }
+        _ => {}
+    }
+
+    state.html_text.push_str(&to_push);
+}
+
+fn visit_attributes(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mut State) {
     let mut first = true;
 
     let mut child_cursor = cursor.clone();
     for attribute in node.named_children(&mut child_cursor) {
         if !first {
-            s.push_str(", ");
+            push_range(state, ", ", None);
         } else {
             first = false;
         }
@@ -53,70 +97,87 @@ fn visit_attributes(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], s: 
         let mut attribute_cursor = cursor.clone();
         let mut children = attribute.named_children(&mut attribute_cursor);
 
-        let attribute_name = children.next();
+        let attribute_name = children.next().unwrap();
         let attribute_value = children.next();
 
-        match (attribute_name, attribute_value) {
-            (Some(attribute_name), Some(attribute_value)) => {
-                let mut text = String::new();
+        let name_text = attribute_name.utf8_text(source).unwrap();
+        push_range(state, name_text, Some(attribute_name.range()));
+        push_range(state, "=", None);
+
+        match attribute_value {
+            Some(attribute_value) => {
+                let text = attribute_value.utf8_text(source).unwrap().to_string();
 
                 match attribute_value.kind() {
                     // Just make javascript attributes into valid HTML
                     "javascript" => {
-                        text = format!("'{}'", attribute_value.utf8_text(source).unwrap())
+                        push_range_surround(state, &text, attribute_value.range(), "'");
                     }
                     "quoted_attribute_value" => {
-                        text = attribute_value.utf8_text(source).unwrap().to_string()
+                        push_range(state, &text, Some(attribute_value.range()));
                     }
                     _ => {}
                 }
-
-                s.push_str(
-                    &format!("{}={}", attribute_name.utf8_text(source).unwrap(), text).to_string(),
+            }
+            None => {
+                push_range_surround(
+                    state,
+                    attribute_name.utf8_text(source).unwrap(),
+                    attribute_name.range(),
+                    "'",
                 );
             }
-            (Some(attribute_name), None) => {
-                s.push_str(
-                    &format!("{0}='{0}'", attribute_name.utf8_text(source).unwrap(),).to_string(),
-                );
-            }
-            (_, _) => {}
         }
     }
 }
 
-fn visit_tag(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], s: &mut String) {
+fn push_range_surround(
+    state: &mut State,
+    to_push: &str,
+    pug_range: tree_sitter::Range,
+    surround: &str,
+) {
+    push_range(state, surround, None);
+    push_range(state, to_push, Some(pug_range));
+    push_range(state, surround, None);
+}
+
+fn visit_tag(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mut State) {
     let mut cursor_mutable = cursor.clone();
 
     let mut child_nodes = node.named_children(&mut cursor_mutable);
-    let name = child_nodes.next().unwrap().utf8_text(source).unwrap();
-    s.push_str(&format!("<{} ", name).to_string());
+    let name_node = child_nodes.next().unwrap();
+    let name = name_node.utf8_text(source).unwrap();
+
+    push_range(state, "<", None);
+    push_range(state, name, Some(name_node.range()));
 
     let mut attribute_cursor = cursor.clone();
     let attributes = child_nodes.next();
 
     match attributes {
         Some(mut attributes) => {
-            visit_attributes(&mut attribute_cursor, &mut attributes, source, s);
+            push_range(state, " ", None);
+            visit_attributes(&mut attribute_cursor, &mut attributes, source, state);
             if is_void_element(name) {
-                s.push_str("/>");
+                push_range(state, "/>", None);
             } else {
-                s.push_str(">");
+                push_range(state, ">", None);
                 let children_elements = child_nodes.next();
                 match children_elements {
                     Some(children_elements) => {
-                        traverse_tree(&mut children_elements.walk(), source, 0, s);
+                        traverse_tree(&mut children_elements.walk(), source, 0, state);
                     }
                     None => {}
                 }
-                s.push_str(&format!("</{}>", name).to_string());
+                push_range(state, &format!("</{}>", name).to_string(), None);
             }
         }
         None => {}
     }
 }
 
-fn traverse_tree(cursor: &mut TreeCursor, source: &[u8], depth: usize, s: &mut String) {
+fn traverse_tree(cursor: &mut TreeCursor, source: &[u8], depth: usize, state: &mut State) {
     let mut node = cursor.node();
 
     if node.is_named() {
@@ -127,10 +188,10 @@ fn traverse_tree(cursor: &mut TreeCursor, source: &[u8], depth: usize, s: &mut S
                 let mut child_cursor = cursor.clone();
                 let children = node.named_children(&mut child_cursor);
                 for child in children {
-                    traverse_tree(&mut child.walk(), source, depth, s);
+                    traverse_tree(&mut child.walk(), source, depth, state);
                 }
             }
-            "tag" => visit_tag(cursor, &mut node, source, s),
+            "tag" => visit_tag(cursor, &mut node, source, state),
             _ => {}
         }
     }
