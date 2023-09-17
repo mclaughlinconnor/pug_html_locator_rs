@@ -58,16 +58,24 @@ fn visit_attributes(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], s: 
 
         match (attribute_name, attribute_value) {
             (Some(attribute_name), Some(attribute_value)) => {
+                let mut text = String::new();
+
+                match attribute_value.kind() {
+                    // Just make javascript attributes into valid HTML
+                    "javascript" => {
+                        text = format!("'{}'", attribute_value.utf8_text(source).unwrap())
+                    }
+                    "quoted_attribute_value" => {
+                        text = attribute_value.utf8_text(source).unwrap().to_string()
+                    }
+                    _ => {}
+                }
+
                 s.push_str(
-                    &format!(
-                        "{}={}",
-                        attribute_name.utf8_text(source).unwrap(),
-                        attribute_value.utf8_text(source).unwrap()
-                    )
-                    .to_string(),
+                    &format!("{}={}", attribute_name.utf8_text(source).unwrap(), text).to_string(),
                 );
             }
-            (Some(attribute_name), _) => {
+            (Some(attribute_name), None) => {
                 s.push_str(
                     &format!("{0}='{0}'", attribute_name.utf8_text(source).unwrap(),).to_string(),
                 );
