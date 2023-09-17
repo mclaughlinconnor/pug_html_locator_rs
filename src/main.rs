@@ -175,6 +175,8 @@ fn visit_tag(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mu
         }
         None => {}
     }
+
+    // TODO: parse content for {{angular_interpolation}} using angular_content parser
 }
 
 fn traverse_tree(cursor: &mut TreeCursor, source: &[u8], depth: usize, state: &mut State) {
