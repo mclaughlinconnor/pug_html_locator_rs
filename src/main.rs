@@ -40,8 +40,7 @@ fn main() {
     parser.set_language(language).unwrap();
 
     let tree = parser.parse(pug_input, None).unwrap();
-    let root_node = tree.root_node();
-    let mut cursor = root_node.walk();
+    let mut root_node = tree.root_node();
 
     let mut state = State {
         html_text: String::new(),
@@ -49,7 +48,7 @@ fn main() {
         ranges: Vec::new(),
     };
 
-    traverse_tree(&mut cursor, pug_input.as_bytes(), &mut state);
+    traverse_tree(&mut root_node, pug_input.as_bytes(), &mut state);
 
     println!("{}", pug_input);
     println!("{}\n", root_node.to_sexp());
@@ -152,28 +151,42 @@ fn visit_tag(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mu
     push_range(state, "<", None);
     push_range(state, name, Some(name_node.range()));
 
-    let mut attribute_cursor = cursor.clone();
-    let attributes = child_nodes.next();
+    let mut has_closed_open_tag = false;
 
-    match attributes {
-        Some(mut attributes) => {
+    for mut child_node in child_nodes {
+        if child_node.kind() == "attributes" {
             push_range(state, " ", None);
-            visit_attributes(&mut attribute_cursor, &mut attributes, source, state);
-            if is_void_element(name) {
-                push_range(state, "/>", None);
-            } else {
-                push_range(state, ">", None);
-                let children_elements = child_nodes.next();
-                match children_elements {
-                    Some(children_elements) => {
-                        traverse_tree(&mut children_elements.walk(), source, 0, state);
-                    }
-                    None => {}
-                }
-                push_range(state, &format!("</{}>", name).to_string(), None);
-            }
+            traverse_tree(&mut child_node, source, state);
+            continue;
         }
-        None => {}
+
+        if is_void_element(name) {
+            push_range(state, "/>", None);
+            break;
+        }
+
+        if !has_closed_open_tag {
+            push_range(state, ">", None);
+            has_closed_open_tag = true;
+        }
+
+        if child_node.kind() == "content" {
+            traverse_tree(&mut child_node, source, state);
+            continue;
+        }
+
+        if child_node.kind() == "children" {
+            traverse_tree(&mut child_node, source, state);
+            continue;
+        }
+    }
+
+    if !has_closed_open_tag {
+        push_range(state, ">", None);
+    }
+
+    if !is_void_element(name) {
+        push_range(state, &format!("</{}>", name).to_string(), None);
     }
 
     // TODO: parse content for {{angular_interpolation}} using angular_content parser
@@ -202,8 +215,8 @@ fn visit_conditional(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], st
     conditional_cursor.goto_next_sibling();
 
     let children = conditional_cursor.node().named_children(&mut child_cursor);
-    for child in children {
-        traverse_tree(&mut child.walk(), source, 0, state);
+    for mut child in children {
+        traverse_tree(&mut child, source, state);
     }
 }
 
@@ -211,14 +224,17 @@ fn visit_pipe(cursor: &mut TreeCursor, _node: &mut Node, source: &[u8], state: &
     cursor.goto_first_child();
     while cursor.goto_next_sibling() {
         if cursor.node().is_named() {
-            for interpolation in cursor.node().named_children(cursor) {
-                traverse_tree(&mut interpolation.walk(), source, 0, state);
-            }
+            traverse_tree(&mut cursor.node(), source, state);
         }
     }
 }
 
-fn visit_tag_interpolation(_cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mut State) {
+fn visit_tag_interpolation(
+    _cursor: &mut TreeCursor,
+    node: &mut Node,
+    source: &[u8],
+    state: &mut State,
+) {
     let mut interpolation_cursor = node.walk();
 
     interpolation_cursor.goto_first_child();
@@ -227,25 +243,27 @@ fn visit_tag_interpolation(_cursor: &mut TreeCursor, node: &mut Node, source: &[
         .node()
         .named_children(&mut interpolation_cursor);
 
-    for child in children {
-        traverse_tree(&mut child.walk(), source, 0, state);
+    for mut child in children {
+        traverse_tree(&mut child, source, state);
     }
 }
 
-fn traverse_tree(cursor: &mut TreeCursor, source: &[u8], depth: usize, state: &mut State) {
-    let mut node = cursor.node();
+fn traverse_tree(node: &mut Node, source: &[u8], state: &mut State) {
+    let node_type = node.kind();
+
+    let mut cursor = node.walk();
 
     if node.is_named() {
-        let node_type = node.kind();
-
         match node_type {
             "source_file" | "children" => {
                 let mut child_cursor = cursor.clone();
                 let children = node.named_children(&mut child_cursor);
-                for child in children {
-                    traverse_tree(&mut child.walk(), source, depth, state);
+                for mut child in children {
+                    traverse_tree(&mut child, source, state);
+                }
+            }
             "escaped_string_interpolation" => {
-                let interpolation_content = node.named_children(cursor).next();
+                let interpolation_content = node.named_children(&mut cursor).next();
                 match interpolation_content {
                     Some(interpolation_content) => {
                         let text = interpolation_content.utf8_text(source).unwrap();
@@ -257,16 +275,28 @@ fn traverse_tree(cursor: &mut TreeCursor, source: &[u8], depth: usize, state: &m
                 }
             }
             "tag_interpolation" => {
-                visit_tag_interpolation(cursor, &mut node, source, state);
+                visit_tag_interpolation(&mut cursor, node, source, state);
             }
             "pipe" => {
-                visit_pipe(cursor, &mut node, source, state);
+                visit_pipe(&mut cursor, node, source, state);
             }
             "conditional" => {
-                visit_conditional(cursor, &mut node, source, state);
+                visit_conditional(&mut cursor, node, source, state);
             }
-            "tag" => visit_tag(cursor, &mut node, source, state),
-            _ => {}
+            "tag" => visit_tag(&mut cursor, node, source, state),
+            "attributes" => visit_attributes(&mut cursor, node, source, state),
+            "content" => {
+                for mut interpolation in node.named_children(&mut cursor) {
+                    traverse_tree(&mut interpolation, source, state);
+                }
+                // Always traverse the whole content after we've traversed the interpolation, so they
+                // appear after in the conversion ranges
+                push_range(state, node.utf8_text(source).unwrap(), Some(node.range()));
+            }
+            "keyword" | "mixin_attributes" | "comment" => {}
+            _ => {
+                println!("Unhandled node type: {}", node_type);
+            }
         }
     }
 }
