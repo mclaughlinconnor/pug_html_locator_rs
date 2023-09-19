@@ -179,6 +179,34 @@ fn visit_tag(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mu
     // TODO: parse content for {{angular_interpolation}} using angular_content parser
 }
 
+fn visit_conditional(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mut State) {
+    let mut child_cursor = cursor.clone();
+    let mut conditional_cursor = node.walk();
+
+    conditional_cursor.goto_first_child();
+    conditional_cursor.goto_next_sibling();
+
+    if conditional_cursor.node().kind() == "javascript" {
+        let condition = conditional_cursor.node();
+
+        push_range(state, "<script>return ", None);
+        push_range(
+            state,
+            condition.utf8_text(source).unwrap(),
+            Some(condition.range()),
+        );
+        push_range(state, ";</script>", None);
+        conditional_cursor.goto_next_sibling();
+    }
+
+    conditional_cursor.goto_next_sibling();
+
+    let children = conditional_cursor.node().named_children(&mut child_cursor);
+    for child in children {
+        traverse_tree(&mut child.walk(), source, 0, state);
+    }
+}
+
 fn visit_pipe(cursor: &mut TreeCursor, _node: &mut Node, source: &[u8], state: &mut State) {
     cursor.goto_first_child();
     while cursor.goto_next_sibling() {
@@ -233,6 +261,9 @@ fn traverse_tree(cursor: &mut TreeCursor, source: &[u8], depth: usize, state: &m
             }
             "pipe" => {
                 visit_pipe(cursor, &mut node, source, state);
+            }
+            "conditional" => {
+                visit_conditional(cursor, &mut node, source, state);
             }
             "tag" => visit_tag(cursor, &mut node, source, state),
             _ => {}
