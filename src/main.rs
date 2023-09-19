@@ -179,6 +179,17 @@ fn visit_tag(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mu
     // TODO: parse content for {{angular_interpolation}} using angular_content parser
 }
 
+fn visit_pipe(cursor: &mut TreeCursor, _node: &mut Node, source: &[u8], state: &mut State) {
+    cursor.goto_first_child();
+    while cursor.goto_next_sibling() {
+        if cursor.node().is_named() {
+            for interpolation in cursor.node().named_children(cursor) {
+                traverse_tree(&mut interpolation.walk(), source, 0, state);
+            }
+        }
+    }
+}
+
 fn visit_tag_interpolation(_cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mut State) {
     let mut interpolation_cursor = node.walk();
 
@@ -219,6 +230,9 @@ fn traverse_tree(cursor: &mut TreeCursor, source: &[u8], depth: usize, state: &m
             }
             "tag_interpolation" => {
                 visit_tag_interpolation(cursor, &mut node, source, state);
+            }
+            "pipe" => {
+                visit_pipe(cursor, &mut node, source, state);
             }
             "tag" => visit_tag(cursor, &mut node, source, state),
             _ => {}
