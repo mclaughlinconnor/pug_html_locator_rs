@@ -255,7 +255,7 @@ fn traverse_tree(node: &mut Node, source: &[u8], state: &mut State) {
 
     if node.is_named() {
         match node_type {
-            "source_file" | "children" => {
+            "source_file" | "children" | "mixin_definition" => {
                 let mut child_cursor = cursor.clone();
                 let children = node.named_children(&mut child_cursor);
                 for mut child in children {
