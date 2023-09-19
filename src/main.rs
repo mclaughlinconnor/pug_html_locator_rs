@@ -179,6 +179,20 @@ fn visit_tag(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mu
     // TODO: parse content for {{angular_interpolation}} using angular_content parser
 }
 
+fn visit_tag_interpolation(_cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mut State) {
+    let mut interpolation_cursor = node.walk();
+
+    interpolation_cursor.goto_first_child();
+    interpolation_cursor.goto_next_sibling();
+    let children = interpolation_cursor
+        .node()
+        .named_children(&mut interpolation_cursor);
+
+    for child in children {
+        traverse_tree(&mut child.walk(), source, 0, state);
+    }
+}
+
 fn traverse_tree(cursor: &mut TreeCursor, source: &[u8], depth: usize, state: &mut State) {
     let mut node = cursor.node();
 
@@ -191,7 +205,20 @@ fn traverse_tree(cursor: &mut TreeCursor, source: &[u8], depth: usize, state: &m
                 let children = node.named_children(&mut child_cursor);
                 for child in children {
                     traverse_tree(&mut child.walk(), source, depth, state);
+            "escaped_string_interpolation" => {
+                let interpolation_content = node.named_children(cursor).next();
+                match interpolation_content {
+                    Some(interpolation_content) => {
+                        let text = interpolation_content.utf8_text(source).unwrap();
+                        push_range(state, "<script>return ", None);
+                        push_range(state, text, Some(interpolation_content.range()));
+                        push_range(state, ";</script>", None);
+                    }
+                    None => {}
                 }
+            }
+            "tag_interpolation" => {
+                visit_tag_interpolation(cursor, &mut node, source, state);
             }
             "tag" => visit_tag(cursor, &mut node, source, state),
             _ => {}
