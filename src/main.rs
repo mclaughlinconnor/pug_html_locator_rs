@@ -49,14 +49,14 @@ fn main() {
         ranges: Vec::new(),
     };
 
-    traverse_tree(&mut cursor, pug_input.as_bytes(), 0, &mut state);
+    traverse_tree(&mut cursor, pug_input.as_bytes(), &mut state);
 
     println!("{}", pug_input);
     println!("{}\n", root_node.to_sexp());
     println!("{}", state.html_text);
     for range in state.ranges {
         println!(
-            "{} => {}",
+            "'{}' => '{}'",
             state.html_text[range.html_start..range.html_end].to_string(),
             state.pug_text[range.pug_start..range.pug_end].to_string()
         );
