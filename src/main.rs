@@ -238,6 +238,28 @@ fn visit_tag_interpolation(
     }
 }
 
+fn visit_filename(_cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mut State) {
+    push_range(state, "<a href=\"", None);
+    push_range(state, node.utf8_text(source).unwrap(), Some(node.range()));
+    push_range(state, "\">", None);
+}
+
+fn visit_extends(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mut State) {
+
+    let mut filename: Option<Node> = None;
+
+    for child in node.named_children(&mut cursor.clone()) {
+        if child.kind() == "filename" {
+            filename = Some(child);
+            break;
+        }
+    }
+
+    if let Some(mut filename) = filename {
+        visit_filename(cursor, &mut filename, source, state)
+    }
+}
+
 fn traverse_tree(node: &mut Node, source: &[u8], state: &mut State) {
     let node_type = node.kind();
 
@@ -291,6 +313,8 @@ fn traverse_tree(node: &mut Node, source: &[u8], state: &mut State) {
                 // appear after in the conversion ranges
                 push_range(state, node.utf8_text(source).unwrap(), Some(node.range()));
             }
+            "extends" => visit_extends(&mut cursor, node, source, state),
+            "filename" => visit_filename(&mut cursor, node, source, state),
             "keyword" | "mixin_attributes" | "comment" => {}
             "ERROR" => {
                 for mut interpolation in node.named_children(&mut cursor) {
