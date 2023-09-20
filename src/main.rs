@@ -179,6 +179,10 @@ fn visit_tag(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mu
         push_range(state, ">", None);
     }
 
+    push_range(state, "</", None);
+    push_range(state, name_node.utf8_text(source).unwrap(), None);
+    push_range(state, ">", None);
+
     // TODO: parse content for {{angular_interpolation}} using angular_content parser
 }
 
