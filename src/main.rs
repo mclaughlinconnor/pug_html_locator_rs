@@ -249,7 +249,6 @@ fn visit_filename(_cursor: &mut TreeCursor, node: &mut Node, source: &[u8], stat
 }
 
 fn visit_extends(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mut State) {
-
     let mut filename: Option<Node> = None;
 
     for child in node.named_children(&mut cursor.clone()) {
@@ -271,7 +270,7 @@ fn traverse_tree(node: &mut Node, source: &[u8], state: &mut State) {
 
     if node.is_named() {
         match node_type {
-            "source_file" | "children" | "mixin_definition" => {
+            "source_file" | "children" | "mixin_definition" | "block_definition" | "block_use" => {
                 let mut child_cursor = cursor.clone();
                 let children = node.named_children(&mut child_cursor);
                 for mut child in children {
@@ -319,7 +318,7 @@ fn traverse_tree(node: &mut Node, source: &[u8], state: &mut State) {
             }
             "extends" => visit_extends(&mut cursor, node, source, state),
             "filename" => visit_filename(&mut cursor, node, source, state),
-            "keyword" | "mixin_attributes" | "comment" => {}
+            "keyword" | "mixin_attributes" | "comment" | "block_name" => {}
             "ERROR" => {
                 for mut interpolation in node.named_children(&mut cursor) {
                     traverse_tree(&mut interpolation, source, state);
