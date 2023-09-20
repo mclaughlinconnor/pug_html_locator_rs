@@ -82,6 +82,16 @@ fn push_range(state: &mut State, to_push: &str, pug_range: Option<tree_sitter::R
     state.html_text.push_str(&to_push);
 }
 
+fn visit_attribute_name(
+    _cursor: &mut TreeCursor,
+    node: &mut Node,
+    source: &[u8],
+    state: &mut State,
+) {
+    let name_text = node.utf8_text(source).unwrap();
+    push_range(state, name_text, Some(node.range()));
+}
+
 fn visit_attributes(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mut State) {
     let mut first = true;
 
@@ -96,35 +106,27 @@ fn visit_attributes(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], sta
         let mut attribute_cursor = cursor.clone();
         let mut children = attribute.named_children(&mut attribute_cursor);
 
-        let attribute_name = children.next().unwrap();
+        let attribute_name = children.next();
+        if let Some(mut attribute_name) = attribute_name {
+            visit_attribute_name(cursor, &mut attribute_name, source, state)
+        };
+
         let attribute_value = children.next();
-
-        let name_text = attribute_name.utf8_text(source).unwrap();
-        push_range(state, name_text, Some(attribute_name.range()));
-        push_range(state, "=", None);
-
         match attribute_value {
-            Some(attribute_value) => {
-                let text = attribute_value.utf8_text(source).unwrap().to_string();
-
-                match attribute_value.kind() {
-                    // Just make javascript attributes into valid HTML
-                    "javascript" => {
-                        push_range_surround(state, &text, attribute_value.range(), "'");
-                    }
-                    "quoted_attribute_value" => {
-                        push_range(state, &text, Some(attribute_value.range()));
-                    }
-                    _ => {}
-                }
+            Some(mut attribute_value) => {
+                push_range(state, "=", None);
+                traverse_tree(&mut attribute_value, source, state);
             }
             None => {
-                push_range_surround(
-                    state,
-                    attribute_name.utf8_text(source).unwrap(),
-                    attribute_name.range(),
-                    "'",
-                );
+                if let Some(attribute_name) = attribute_name {
+                    push_range(state, "=", None);
+                    push_range_surround(
+                        state,
+                        attribute_name.utf8_text(source).unwrap(),
+                        attribute_name.range(),
+                        "'",
+                    );
+                }
             }
         }
     }
@@ -141,15 +143,18 @@ fn push_range_surround(
     push_range(state, surround, None);
 }
 
+fn visit_tag_name(_cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mut State) {
+    let name = node.utf8_text(source).unwrap();
+    push_range(state, name, Some(node.range()));
+}
+
 fn visit_tag(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mut State) {
     let mut cursor_mutable = cursor.clone();
-
     let mut child_nodes = node.named_children(&mut cursor_mutable);
-    let name_node = child_nodes.next().unwrap();
-    let name = name_node.utf8_text(source).unwrap();
 
+    let mut name_node = child_nodes.next().unwrap();
     push_range(state, "<", None);
-    push_range(state, name, Some(name_node.range()));
+    traverse_tree(&mut name_node, source, state);
 
     let mut has_closed_open_tag = false;
 
@@ -160,33 +165,18 @@ fn visit_tag(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mu
             continue;
         }
 
-        if is_void_element(name) {
-            push_range(state, "/>", None);
-            break;
-        }
-
+        // no void element handling because that could still get typed, even if it doesn't compile
         if !has_closed_open_tag {
             push_range(state, ">", None);
             has_closed_open_tag = true;
         }
 
-        if child_node.kind() == "content" {
-            traverse_tree(&mut child_node, source, state);
-            continue;
-        }
-
-        if child_node.kind() == "children" {
-            traverse_tree(&mut child_node, source, state);
-            continue;
-        }
+        // found something else that needs no extra handling
+        traverse_tree(&mut child_node, source, state);
     }
 
     if !has_closed_open_tag {
         push_range(state, ">", None);
-    }
-
-    if !is_void_element(name) {
-        push_range(state, &format!("</{}>", name).to_string(), None);
     }
 
     // TODO: parse content for {{angular_interpolation}} using angular_content parser
@@ -284,7 +274,15 @@ fn traverse_tree(node: &mut Node, source: &[u8], state: &mut State) {
                 visit_conditional(&mut cursor, node, source, state);
             }
             "tag" => visit_tag(&mut cursor, node, source, state),
+            "tag_name" => visit_tag_name(&mut cursor, node, source, state),
             "attributes" => visit_attributes(&mut cursor, node, source, state),
+            "attribute_name" => visit_attribute_name(&mut cursor, node, source, state),
+            "javascript" => {
+                push_range_surround(state, node.utf8_text(source).unwrap(), node.range(), "'");
+            }
+            "quoted_attribute_value" => {
+                push_range(state, node.utf8_text(source).unwrap(), Some(node.range()));
+            }
             "content" => {
                 for mut interpolation in node.named_children(&mut cursor) {
                     traverse_tree(&mut interpolation, source, state);
@@ -294,6 +292,11 @@ fn traverse_tree(node: &mut Node, source: &[u8], state: &mut State) {
                 push_range(state, node.utf8_text(source).unwrap(), Some(node.range()));
             }
             "keyword" | "mixin_attributes" | "comment" => {}
+            "ERROR" => {
+                for mut interpolation in node.named_children(&mut cursor) {
+                    traverse_tree(&mut interpolation, source, state);
+                }
+            }
             _ => {
                 println!("Unhandled node type: {}", node_type);
             }
