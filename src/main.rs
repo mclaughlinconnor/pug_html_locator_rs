@@ -32,8 +32,15 @@ fn main() {
     let mut parser = Parser::new();
 
     let pug_input = r#"
-        tag(attribute=isAuthenticated ? true : false, attribute)
-          tag_two(attribute)
+block append name
+  span
+    div
+  append name
+    img(src="test")
+      h1
+
+section
+
     "#;
 
     let language = unsafe { tree_sitter_pug() };
@@ -156,7 +163,7 @@ fn visit_tag(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mu
     push_range(state, "<", None);
     traverse_tree(&mut name_node, source, state);
 
-    let mut has_closed_open_tag = false;
+    let mut has_children = false;
 
     for mut child_node in child_nodes {
         if child_node.kind() == "attributes" {
@@ -165,23 +172,30 @@ fn visit_tag(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mu
             continue;
         }
 
-        // no void element handling because that could still get typed, even if it doesn't compile
-        if !has_closed_open_tag {
+        if !has_children {
+            if is_void_element(name_node.utf8_text(source).unwrap()) {
+                push_range(state, "/", None);
+            }
             push_range(state, ">", None);
-            has_closed_open_tag = true;
+            has_children = true;
         }
 
         // found something else that needs no extra handling
         traverse_tree(&mut child_node, source, state);
     }
 
-    if !has_closed_open_tag {
+    if !has_children {
+        if is_void_element(name_node.utf8_text(source).unwrap()) {
+            push_range(state, "/", None);
+        }
         push_range(state, ">", None);
     }
 
-    push_range(state, "</", None);
-    push_range(state, name_node.utf8_text(source).unwrap(), None);
-    push_range(state, ">", None);
+    if !is_void_element(name_node.utf8_text(source).unwrap()) {
+        push_range(state, "</", None);
+        push_range(state, name_node.utf8_text(source).unwrap(), None);
+        push_range(state, ">", None);
+    }
 
     // TODO: parse content for {{angular_interpolation}} using angular_content parser
 }
