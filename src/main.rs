@@ -277,6 +277,21 @@ fn visit_extends(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state:
     }
 }
 
+fn visit_case_when(_cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mut State) {
+    let cursor = &mut node.walk();
+
+    let children = node.named_children(cursor);
+    for mut child in children {
+        if child.kind() == "javascript" {
+            push_range(state, "<script>return ", None);
+            push_range(state, child.utf8_text(source).unwrap(), Some(child.range()));
+            push_range(state, ";</script>", None);
+        } else {
+            traverse_tree(&mut child, source, state);
+        }
+    }
+}
+
 fn traverse_tree(node: &mut Node, source: &[u8], state: &mut State) {
     let node_type = node.kind();
 
@@ -303,6 +318,7 @@ fn traverse_tree(node: &mut Node, source: &[u8], state: &mut State) {
                     None => {}
                 }
             }
+            "when" | "case" => visit_case_when(&mut cursor, node, source, state),
             "tag_interpolation" => {
                 visit_tag_interpolation(&mut cursor, node, source, state);
             }
