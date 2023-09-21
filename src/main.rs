@@ -385,8 +385,8 @@ fn traverse_tree(node: &mut Node, source: &[u8], state: &mut State) {
             "conditional" => {
                 visit_conditional(&mut cursor, node, source, state);
             }
-            "tag" => visit_tag(&mut cursor, node, source, state),
-            "tag_name" => visit_tag_name(&mut cursor, node, source, state),
+            "tag" | "filter" => visit_tag(&mut cursor, node, source, state),
+            "tag_name" | "filter_name" => visit_tag_name(&mut cursor, node, source, state),
             "attributes" => visit_attributes(&mut cursor, node, source, state),
             "attribute_name" => visit_attribute_name(&mut cursor, node, source, state),
             "javascript" => {
