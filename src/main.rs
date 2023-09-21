@@ -292,6 +292,48 @@ fn visit_case_when(_cursor: &mut TreeCursor, node: &mut Node, source: &[u8], sta
     }
 }
 
+fn visit_unbuffered_code(
+    _cursor: &mut TreeCursor,
+    node: &mut Node,
+    source: &[u8],
+    state: &mut State,
+) {
+    for mut child in node.named_children(&mut node.walk()) {
+        if child.kind() == "javascript" {
+            push_range(state, "<script>", None);
+            push_range(
+                state,
+                &child.utf8_text(source).unwrap(),
+                Some(child.range()),
+            );
+            push_range(state, ";</script>", None);
+        } else {
+            traverse_tree(&mut child, source, state);
+        }
+    }
+}
+
+fn visit_buffered_code(
+    _cursor: &mut TreeCursor,
+    node: &mut Node,
+    source: &[u8],
+    state: &mut State,
+) {
+    for mut child in node.named_children(&mut node.walk()) {
+        if child.kind() == "javascript" {
+            push_range(state, "<script>return ", None);
+            push_range(
+                state,
+                &child.utf8_text(source).unwrap(),
+                Some(child.range()),
+            );
+            push_range(state, ";</script>", None);
+        } else {
+            traverse_tree(&mut child, source, state);
+        }
+    }
+}
+
 fn traverse_tree(node: &mut Node, source: &[u8], state: &mut State) {
     let node_type = node.kind();
 
@@ -305,6 +347,21 @@ fn traverse_tree(node: &mut Node, source: &[u8], state: &mut State) {
                 for mut child in children {
                     traverse_tree(&mut child, source, state);
                 }
+            }
+            "script_block" => {
+                for mut child in node.named_children(&mut cursor) {
+                    if child.kind() == "javascript" {
+                        push_range(state, "<script>", None);
+                        push_range(state, child.utf8_text(source).unwrap(), Some(child.range()));
+                        push_range(state, ";</script>", None);
+                    } else {
+                        traverse_tree(&mut child, source, state);
+                    }
+                }
+            }
+            "unbuffered_code" => visit_unbuffered_code(&mut cursor, node, source, state),
+            "buffered_code" | "unescaped_buffered_code" => {
+                visit_buffered_code(&mut cursor, node, source, state)
             }
             "escaped_string_interpolation" => {
                 let interpolation_content = node.named_children(&mut cursor).next();
