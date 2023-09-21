@@ -155,6 +155,24 @@ fn visit_tag_name(_cursor: &mut TreeCursor, node: &mut Node, source: &[u8], stat
     push_range(state, name, Some(node.range()));
 }
 
+fn visit_id_class(nodes: &Vec<Node>, source: &[u8], state: &mut State) {
+    let mut start = true;
+
+    for node in nodes {
+        if !start {
+            push_range(state, " ", None);
+        }
+
+        let mut range = node.range();
+        range.start_byte += 1;
+        let text = node.utf8_text(source).unwrap()[1..].to_string();
+
+        push_range(state, &text, Some(range));
+
+        start = false;
+    }
+}
+
 fn visit_tag(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mut State) {
     let mut cursor_mutable = cursor.clone();
     let mut child_nodes = node.named_children(&mut cursor_mutable);
@@ -165,10 +183,37 @@ fn visit_tag(cursor: &mut TreeCursor, node: &mut Node, source: &[u8], state: &mu
 
     let mut has_children = false;
 
+    let mut classes: Vec<Node> = Vec::new();
+    let mut ids: Vec<Node> = Vec::new();
+
     for mut child_node in child_nodes {
+        if child_node.kind() == "class" {
+            classes.push(child_node);
+            continue;
+        }
+
+        if child_node.kind() == "id" {
+            ids.push(child_node);
+            continue;
+        }
+
         if child_node.kind() == "attributes" {
+
+            if classes.len() > 0 {
+                push_range(state, " class=\"", None);
+                visit_id_class(&classes, source, state);
+                push_range(state, "\"", None);
+            }
+
+            if ids.len() > 0 {
+                push_range(state, " id=\"", None);
+                visit_id_class(&ids, source, state);
+                push_range(state, "\"", None);
+            }
+
             push_range(state, " ", None);
             traverse_tree(&mut child_node, source, state);
+
             continue;
         }
 
