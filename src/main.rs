@@ -341,11 +341,23 @@ fn traverse_tree(node: &mut Node, source: &[u8], state: &mut State) {
 
     if node.is_named() {
         match node_type {
-            "source_file" | "children" | "mixin_definition" | "block_definition" | "block_use" => {
+            "source_file" | "children" | "mixin_definition" | "block_definition" | "block_use"
+            | "each" => {
                 let mut child_cursor = cursor.clone();
                 let children = node.named_children(&mut child_cursor);
                 for mut child in children {
                     traverse_tree(&mut child, source, state);
+                }
+            }
+            "iteration_variable" | "iteration_iterator" => {
+                for mut child in node.named_children(&mut cursor) {
+                    if child.kind() == "javascript" {
+                        push_range(state, "<script>return ", None);
+                        push_range(state, child.utf8_text(source).unwrap(), Some(child.range()));
+                        push_range(state, ";</script>", None);
+                    } else {
+                        traverse_tree(&mut child, source, state);
+                    }
                 }
             }
             "script_block" => {
